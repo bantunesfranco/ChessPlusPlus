@@ -1,64 +1,29 @@
 cmake_minimum_required(VERSION 3.20)
 
 # ============================================================================
-# Test Executable: Board Tests
+# Helper Function - Add Test with All Standard Setup
 # ============================================================================
 
-add_executable(board_tests
-        board_tests.cpp
-)
+function(add_chess_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+    target_link_libraries(${TEST_NAME} PRIVATE chess-engine)
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+    target_compile_features(${TEST_NAME} PRIVATE cxx_std_23)
 
-# Link against main chess library
-target_link_libraries(board_tests PRIVATE chess-engine)
+    if(NOT MSVC)
+        target_compile_options(${TEST_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 
-# Include paths
-target_include_directories(board_tests
-        PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-
-# C++ Standard
-target_compile_features(board_tests PRIVATE cxx_std_23)
-
-# Compiler flags for tests
-if(NOT MSVC)
-    target_compile_options(board_tests PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+    set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 60)
+endfunction()
 
 # ============================================================================
-# Register Tests with CTest
+# Add Tests
 # ============================================================================
 
-# Add test to CTest
-add_test(
-        NAME BoardTests
-        COMMAND board_tests
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# Board Tests
+add_chess_test(BoardTests board_tests.cpp)
 
-# Set test properties
-set_tests_properties(BoardTests
-        PROPERTIES
-        TIMEOUT 30  # 30 second timeout
-        LABELS "board"
-)
-
-# ============================================================================
-# Optional: Additional Tests (Add as needed)
-# ============================================================================
-
-# Example: Add more test executables here
-# add_executable(move_generation_tests move_generation_tests.cpp)
-# target_link_libraries(move_generation_tests PRIVATE chess-engine)
-# add_test(NAME MoveGenerationTests COMMAND move_generation_tests)
-
-# ============================================================================
-# Test Output
-# ============================================================================
-
-# Print test summary
-message(STATUS "Tests Configuration:")
-message(STATUS "  Board Tests: Enabled")
-message(STATUS "  Test Binary: ${CMAKE_BINARY_DIR}/board_tests")
-message(STATUS "  Run tests with: ctest --output-on-failure")
+# Search Tests
+add_chess_test(SearchTests search_tests.cpp)
