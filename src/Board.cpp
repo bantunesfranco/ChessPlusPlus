@@ -55,6 +55,8 @@ namespace chess
     {
     public:
         Impl();
+        Impl(const Impl& other) = default;
+        Impl& operator=(const Impl& other) = default;
 
         Position position;
         ZobristHasher hasher;
@@ -808,6 +810,15 @@ namespace chess
     Board::Board() : impl(std::make_unique<Impl>()) {}
 
     Board::~Board() = default;
+
+    Board::Board(const Board& board): impl(std::make_unique<Impl>(*board.impl)) {}
+
+    Board& Board::operator=(const Board& other)
+    {
+        if (this  != &other)
+            impl = std::make_unique<Impl>(*other.impl);
+        return  *this;
+    }
 
     void Board::load_fen(const std::string& fen) const {
         impl->parse_fen(fen);

@@ -4,6 +4,8 @@
 #include "chess/Eval.hpp"
 #include <algorithm>
 #include <cstring>
+#include <iostream>
+#include <ranges>
 
 #include "chess/PieceSquareTables.hpp"
 #include "chess/internal/Bitboard.hpp"
@@ -19,11 +21,11 @@ private:
     std::array<std::array<int, 64>, 64> history{};
 
 public:
-    void store(Square from, Square to, Depth d) {
+    void store(const Square from, const Square to, const Depth d) {
         history[(int)from][(int)to] += d * d;
     }
 
-    [[nodiscard]] int get_score(Square from, Square to) const {
+    [[nodiscard]] int get_score(const Square from, const Square to) const {
         return history[(int)from][(int)to];
     }
 
@@ -41,19 +43,31 @@ public:
     KillerMoves() { clear(); }
 
     void store(const Depth d, const Move m) {
-        if (d < MAX_DEPTH && killers[(int)d][0] != m) {
-            killers[(int)d][1] = killers[(int)d][0];
-            killers[(int)d][0] = m;
+        if (d < MAX_DEPTH && killers[d][0] != m) {
+            killers[d][1] = killers[d][0];
+            killers[d][0] = m;
         }
     }
 
     [[nodiscard]] bool is_killer(const Depth d, const Move m) const {
         if (d >= MAX_DEPTH) return false;
-        return killers[(int)d][0] == m || killers[(int)d][1] == m;
+        return killers[d][0] == m || killers[d][1] == m;
     }
 
     void clear() {
         for (auto& row : killers) row.fill(Move());
+    }
+};
+
+struct SearchStats {
+    uint64_t nodes = 0;
+    uint64_t tt_hits = 0;
+    uint64_t cutoffs = 0;
+    std::chrono::high_resolution_clock::time_point start_time;
+
+    [[nodiscard]] double elapsed_seconds() const {
+        const auto now = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration<double>(now - start_time).count();
     }
 };
 
@@ -70,7 +84,7 @@ public:
     PieceSquareTables pst;
     Evaluator evaluator;
 
-    SearchStats stats;
+    SearchStats stats{};
     bool stop_requested = false;
 
     Impl();
@@ -83,11 +97,12 @@ public:
     Score quiescence(Board& board, Score alpha, Score beta);
     Score evaluate(const Board& board);
 
+    void order_moves(MoveList& moves, const Board& board, Move ttmove) const;
+
 private:
     Move best_move_at_depth = Move();
 
-    void order_moves(MoveList& moves, const Board& board, Move ttmove);
-    int move_score(const Move& move, const Board& board, Move ttmove, Depth depth);
+    [[nodiscard]] int move_score(const Move& move, const Board& board, Move ttmove, Depth depth) const;
 };
 
 // ============================================================================
@@ -96,44 +111,44 @@ private:
 
 Engine::Impl::Impl() : ttable(config.tt_size_mb), evaluator(pst) {}
 
-Engine::Impl::Impl(const SearchConfig& cfg) : config(cfg) , ttable(cfg.tt_size_mb),evaluator(pst) {}
+Engine::Impl::Impl(const SearchConfig& cfg) : config(cfg) , ttable(cfg.tt_size_mb), evaluator(pst) {}
 
-/ ============================================================================
+// ============================================================================
 // Move Ordering - Critical for Alpha-Beta Efficiency
 // ============================================================================
 
-void Engine::Impl::order_moves(MoveList& moves, const Board& board, Move ttmove) {
+void Engine::Impl::order_moves(MoveList& moves, const Board& board, const Move ttmove) const {
     // Score moves for ordering
     std::vector<std::pair<int, Move>> scored;
     scored.reserve(moves.size());
 
-    for (size_t i = 0; i < moves.size(); ++i) {
-        int score = move_score(moves[i], board, ttmove, 0);
-        scored.push_back({score, moves[i]});
+    for (auto& move : moves) {
+        int score = move_score(move, board, ttmove, 0);
+        scored.emplace_back(score, move);
     }
 
     // Sort by score (descending)
-    std::sort(scored.begin(), scored.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::ranges::sort(scored,
+                      [](const auto& a, const auto& b) { return a.first > b.first; });
 
     // Rebuild moves list in sorted order
     moves.clear();
-    for (const auto& [score, move] : scored) {
+    for (const auto& move : scored | std::views::values) {
         moves.add(move);
     }
 }
 
-int Engine::Impl::move_score(const Move& move, const Board& board, Move ttmove, Depth depth) {
+int Engine::Impl::move_score(const Move& move, const Board& board, const Move ttmove, const Depth depth) const {
     // Transposition table move - highest priority
     if (move == ttmove) return 1000000;
 
     // Captures - MVV/LVA scoring
     if (move.flag() == MoveFlag::CAPTURE) {
-        Piece victim = board.piece_at(move.to());
-        Piece attacker = board.piece_at(move.from());
+        const Piece victim = board.piece_at(move.to());
+        const Piece attacker = board.piece_at(move.from());
 
-        int victim_value = PIECE_VALUES[(int)get_piece_type(victim)];
-        int attacker_value = PIECE_VALUES[(int)get_piece_type(attacker)];
+        const int victim_value = PIECE_VALUES[(int)get_piece_type(victim)];
+        const int attacker_value = PIECE_VALUES[(int)get_piece_type(attacker)];
 
         return 500000 + (victim_value * 10 - attacker_value);
     }
@@ -149,38 +164,36 @@ int Engine::Impl::move_score(const Move& move, const Board& board, Move ttmove, 
 // Quiescence Search - Handle Tactical Positions
 // ============================================================================
 
-Score Engine::Impl::quiescence(Board& board, Score alpha, Score beta) {
+Score Engine::Impl::quiescence(Board& board, Score alpha, const Score beta) {
     if (stop_requested) return 0;
 
     stats.nodes++;
 
     // Check terminal states
-    if (board.is_checkmate()) {
-        return board.side_to_move() == Color::WHITE ? -CHECKMATE_SCORE : CHECKMATE_SCORE;
-    }
-    if (board.is_stalemate()) {
-        return STALEMATE_SCORE;
-    }
+    if (board.is_checkmate())
+        return board.side_to_move() == Color::WHITE ? -CHECKMATE : CHECKMATE;
+
+    if (board.is_stalemate())
+        return STALEMATE;
 
     // Stand-pat: position value without any moves
-    Score stand_pat = evaluate(board);
+    const Score stand_pat = evaluate(board);
 
-    if (stand_pat >= beta) {
+    if (stand_pat >= beta)
         return beta;  // Pruning
-    }
 
-    if (alpha < stand_pat) {
+    if (alpha < stand_pat)
         alpha = stand_pat;
-    }
 
     // Only generate capture moves in quiescence
     MoveList captures;
     board.generate_captures(captures);
 
     // Try each capture
-    for (size_t i = 0; i < captures.size(); ++i) {
-        board.make_move(captures[i]);
-        Score score = -quiescence(board, -beta, -alpha);
+    for (const auto capture : captures) {
+        board.make_move(capture);
+
+        const Score score = -quiescence(board, -beta, -alpha);
         board.undo_move();
 
         if (score >= beta) {
@@ -198,11 +211,11 @@ Score Engine::Impl::quiescence(Board& board, Score alpha, Score beta) {
 // Main Search - Negamax with Alpha-Beta Pruning
 // ============================================================================
 
-Score Engine::Impl::negamax(Board& board, Depth depth, Score alpha, Score beta) {
+Score Engine::Impl::negamax(Board& board, Depth depth, Score alpha, const Score beta) {
     if (stop_requested) return 0;
 
     // Transposition table lookup
-    auto tt_entry = ttable.lookup(board.zobrist_hash());
+    const auto tt_entry = ttable.lookup(board.zobrist_hash(), depth);
     if (tt_entry && tt_entry->depth >= depth) {
         stats.tt_hits++;
         return tt_entry->score;
@@ -211,47 +224,41 @@ Score Engine::Impl::negamax(Board& board, Depth depth, Score alpha, Score beta) 
     stats.nodes++;
 
     // Terminal states
-    if (board.is_checkmate()) {
-        return -CHECKMATE_SCORE;
-    }
-    if (board.is_stalemate() || board.is_50_move_draw()) {
+    if (board.is_checkmate())
+        return -CHECKMATE;
+
+    if (board.is_stalemate() || board.is_50_move_draw())
         return 0;
-    }
 
     // Depth limit - enter quiescence search
     if (depth == 0) {
-        if (config.use_quiescence_search) {
+        if (config.use_quiescence_search)
             return quiescence(board, alpha, beta);
-        } else {
-            return evaluate(board);
-        }
+        return evaluate(board);
     }
 
     // Generate moves
     MoveList moves;
     board.generate_moves(moves);
 
-    if (moves.empty()) {
-        // This shouldn't happen (checkmate/stalemate checked above)
-        return board.is_in_check() ? -CHECKMATE_SCORE : 0;
-    }
+    assert(!moves.empty());  // Should have been caught by terminal state checks
 
     // Move ordering
     Move ttmove = tt_entry ? tt_entry->best_move : Move();
-    if (config.use_move_ordering) {
+    if (config.use_move_ordering)
         order_moves(moves, board, ttmove);
-    }
 
-    Score best_score = INT_MIN;
+    Score best_score = std::numeric_limits<Score>::max();
     Move best_move = moves[0];
     int moves_searched = 0;
+    Flag flag = EXACT;
 
     // Try each move
-    for (size_t i = 0; i < moves.size(); ++i) {
-        board.make_move(moves[i]);
+    for (const auto& move : moves) {
+        board.make_move(move);
 
         // Recursively search
-        Score score = -negamax(board, depth - 1, -beta, -alpha);
+        const Score score = -negamax(board, depth - 1, -beta, -alpha);
 
         board.undo_move();
 
@@ -259,35 +266,36 @@ Score Engine::Impl::negamax(Board& board, Depth depth, Score alpha, Score beta) 
 
         if (score > best_score) {
             best_score = score;
-            best_move = moves[i];
+            best_move = move;
+            flag = EXACT;
         }
 
-        if (best_score > alpha) {
+        if (best_score > alpha)
+        {
             alpha = best_score;
+            flag = LOWER_BOUND;
         }
 
         // Beta cutoff
         if (alpha >= beta) {
             stats.cutoffs++;
+                flag = LOWER_BOUND;
 
             // Update killer move
-            if (moves[i].flag() != MoveFlag::CAPTURE) {
-                killers.store(depth, moves[i]);
-            }
+            if (!move.is_capture())
+                killers.store(depth, move);
 
             break;
         }
     }
 
     // Update history for quiet moves
-    if (best_move.flag() != MoveFlag::CAPTURE && moves_searched > 0) {
+    if (!best_move.is_capture() && moves_searched > 0)
         history.store(best_move.from(), best_move.to(), depth);
-    }
 
     // Store in transposition table
-    if (config.use_transposition_table) {
-        ttable.store(board.zobrist_hash(), best_score, depth, best_move);
-    }
+    if (config.use_transposition_table)
+        ttable.store(board.zobrist_hash(), best_score, depth, flag, best_move);
 
     return best_score;
 }
@@ -296,7 +304,7 @@ Score Engine::Impl::negamax(Board& board, Depth depth, Score alpha, Score beta) 
 // Iterative Deepening - Progressive Deepening with Time Management
 // ============================================================================
 
-SearchResult Engine::Impl::search_iterative(Board& board, std::chrono::milliseconds time_limit) {
+SearchResult Engine::Impl::search_iterative(Board& board, const std::chrono::milliseconds time_limit) {
     stats.start_time = std::chrono::high_resolution_clock::now();
     stop_requested = false;
 
@@ -307,7 +315,7 @@ SearchResult Engine::Impl::search_iterative(Board& board, std::chrono::milliseco
     best_result.nodes_searched = 0;
 
     // Iterative deepening: search depth 1, 2, 3, ... until time runs out
-    for (Depth depth = 1; depth <= config.max_depth; ++depth) {
+    for (int depth = 1; depth <= config.max_depth; ++depth) {
         history.clear();
         killers.clear();
 
@@ -326,14 +334,14 @@ SearchResult Engine::Impl::search_iterative(Board& board, std::chrono::milliseco
         Score best_score = INT_MIN;
         Move best_move = moves[0];
 
-        for (size_t i = 0; i < moves.size(); ++i) {
-            board.make_move(moves[i]);
-            Score score = -negamax(board, depth - 1, -beta, -alpha);
+        for (const auto& move : moves) {
+            board.make_move(move);
+            const Score score = -negamax(board, depth - 1, -beta, -alpha);
             board.undo_move();
 
             if (score > best_score) {
                 best_score = score;
-                best_move = moves[i];
+                best_move = move;
                 alpha = best_score;
             }
         }
@@ -347,18 +355,16 @@ SearchResult Engine::Impl::search_iterative(Board& board, std::chrono::milliseco
 
         // Report iteration
         std::cout << "Depth " << depth << ": "
-                 << best_move.from() << "-" << best_move.to()
+                 << square_to_string(best_move.from()) << "-" << square_to_string(best_move.to())
                  << " (score: " << best_score << ", nodes: " << stats.nodes
                  << ", time: " << best_result.search_time << "s)" << std::endl;
 
-        if (config.on_iteration_complete) {
+        if (config.on_iteration_complete)
             config.on_iteration_complete(best_result);
-        }
 
         // Check time limit
-        if (stats.elapsed_seconds() * 1000 > time_limit.count()) {
+        if (stats.elapsed_seconds() * 1000 > time_limit.count())
             break;
-        }
     }
 
     return best_result;
@@ -368,11 +374,11 @@ SearchResult Engine::Impl::search_iterative(Board& board, std::chrono::milliseco
 // Fixed Depth Search
 // ============================================================================
 
-SearchResult Engine::Impl::search_fixed_depth(Board& board, Depth max_depth) {
+SearchResult Engine::Impl::search_fixed_depth(Board& board, const Depth max_depth) {
     stats.start_time = std::chrono::high_resolution_clock::now();
     stop_requested = false;
 
-    SearchResult result;
+    SearchResult result = {};
 
     MoveList moves;
     board.generate_moves(moves);
@@ -384,14 +390,14 @@ SearchResult Engine::Impl::search_fixed_depth(Board& board, Depth max_depth) {
     Score best_score = INT_MIN;
     Move best_move = moves[0];
 
-    for (size_t i = 0; i < moves.size(); ++i) {
-        board.make_move(moves[i]);
-        Score score = -negamax(board, max_depth - 1, -50000, 50000);
+    for (const auto& move : moves) {
+        board.make_move(move);
+        Score score = -negamax(board, max_depth - 1, (Score)-50000, (Score)50000);
         board.undo_move();
 
         if (score > best_score) {
             best_score = score;
-            best_move = moves[i];
+            best_move = move;
         }
     }
 
@@ -432,55 +438,51 @@ void Engine::set_tt_size(const int mb) const {
     impl->ttable.resize(mb);
 }
 
-void Engine::clear_cache() {
+void Engine::clear_cache() const {
     impl->ttable.clear();
 }
 
-Score Engine::evaluate(const Board& board) {
+Score Engine::evaluate(const Board& board) const{
     return impl->evaluate(board);
 }
 
-void Engine::stop_search() {
+void Engine::stop_search() const{
     impl->stop_requested = true;
 }
 
-SearchResult Engine::find_best_move(const Board& board, std::chrono::milliseconds time_limit) {
-    auto board_copy = board;  // Work with copy
-    return impl->search_iterative(board_copy, time_limit);
+SearchResult Engine::find_best_move(Board board, const std::chrono::milliseconds time_limit) const {
+    return impl->search_iterative(board, time_limit);
 }
 
-SearchResult Engine::find_best_move_depth(const Board& board, Depth max_depth) {
-    auto board_copy = board;
-    return impl->search_fixed_depth(board_copy, max_depth);
+SearchResult Engine::find_best_move(Board board, const Depth max_depth) const {
+    return impl->search_fixed_depth(board, max_depth);
 }
 
-SearchResult Engine::find_best_move(const Board& board, int max_depth, std::chrono::milliseconds time_limit) {
+SearchResult Engine::find_best_move(Board board, const int max_depth, const std::chrono::milliseconds time_limit) const {
     impl->config.max_depth = max_depth;
-    auto board_copy = board;
-    return impl->search_iterative(board_copy, time_limit);
+    return impl->search_iterative(board, time_limit);
 }
 
-Score Engine::evaluate(const Board& board) {
-    return impl->evaluate(board);
-}
-
-std::vector<Move> Engine::get_principal_variation(const Board& board, int depth) {
+std::vector<Move> Engine::get_principal_variation(Board board, const int depth) const {
     // Extract PV from transposition table
     std::vector<Move> pv;
-    auto board_copy = board;
 
     for (int i = 0; i < depth; ++i) {
-        auto entry = impl->ttable.lookup(board_copy.zobrist_hash());
-        if (!entry) break;
 
-        pv.push_back(entry->best_move);
-        board_copy.make_move(entry->best_move);
+        const auto entry = impl->ttable.lookup(board.zobrist_hash(), 0);
+        if (!entry)
+            break;
+
+        Move best_move = entry->best_move;
+
+        pv.push_back(best_move);
+        board.make_move(best_move);
     }
 
     return pv;
 }
 
-MoveList Engine::get_ranked_moves(const Board& board) {
+MoveList Engine::get_ranked_moves(const Board& board) const {
     MoveList moves;
     board.generate_moves(moves);
 
@@ -489,8 +491,8 @@ MoveList Engine::get_ranked_moves(const Board& board) {
     return moves;
 }
 
-Engine::Analysis Engine::analyze(const Board& board, int depth) {
-    auto result = find_best_move_depth(board, depth);
+Engine::Analysis Engine::analyze(const Board& board, const int depth) const {
+    const auto result = find_best_move(board, depth);
 
     Analysis analysis;
     analysis.best_move = result.best_move;

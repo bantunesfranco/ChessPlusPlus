@@ -37,13 +37,10 @@ namespace chess {
             entry = {h, s, d, f, m};
         }
 
-        bool lookup(const Hash h, const Depth d, Score& out_score, Move& out_move) const {
-            if (const TTEntry& entry = table[h & mask]; entry.key == h && entry.depth >= d) {
-                out_score = entry.score;
-                out_move = entry.best_move;
-                return true;
-            }
-            return false;
+        [[nodiscard]] std::optional<TTEntry> lookup(const Hash h, const Depth d) const {
+            if (const TTEntry& entry = table[h & mask]; entry.key == h && entry.depth >= d)
+                return entry;
+            return std::nullopt;
         }
 
         void resize(const size_t mb_size) {

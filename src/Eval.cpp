@@ -46,7 +46,7 @@ namespace chess
                     // PST value (phase-interpolated)
                     const int value = pst.get_value(pt, sq, color, phase);
 
-                    score += sign * (material + value);
+                    score += (sign * (material + value));
                 }
             }
         }
@@ -79,20 +79,25 @@ namespace chess
         }
 
         pieces = std::min(pieces, 24);
-        return static_cast<double>(pieces) / 24.0;
+        return static_cast<double>(pieces * 256) / 24.0;
     }
 
+
+    Evaluator::Evaluator() {
+        PieceSquareTables pst;
+        impl = std::make_unique<Impl>(pst);
+    }
 
     Evaluator::Evaluator(const PieceSquareTables& pst): impl(std::make_unique<Impl>(pst)) {}
 
     Evaluator::~Evaluator() = default;
 
-    Score Evaluator::evaluate(const Board& board)
+    Score Evaluator::evaluate(const Board& board) const
     {
         return impl->evaluate(board);
     }
 
-    Score Evaluator::evaluate_white(const Board& board)
+    Score Evaluator::evaluate_white(const Board& board) const
     {
         Score eval = impl->evaluate(board);
         if (board.side_to_move() == Color::WHITE)
@@ -100,12 +105,12 @@ namespace chess
         return eval;
     }
 
-    Score Evaluator::material_count(const Board& board)
+    Score Evaluator::material_count(const Board& board) const
     {
         return impl->get_material(board, board.side_to_move());
     }
 
-    double Evaluator::get_phase(const Board& board)
+    double Evaluator::get_phase(const Board& board) const
     {
         return impl->get_game_phase(board);
     }

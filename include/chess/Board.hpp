@@ -13,6 +13,8 @@ namespace chess {
 public:
     Board();
     ~Board();
+    Board(const Board& board);
+    Board& operator=(const Board& other);
 
     // === Initialization ===
 

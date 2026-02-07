@@ -31,7 +31,7 @@ namespace chess {
     using Bitboard = uint64_t;  // 64-bit bitboard
     using Depth    = int8_t;    // Search depth
     using Hash     = uint64_t;  // Zobrist hash
-    using Score    = int16_t;   // Evaluation score in centipawns
+    using Score    = int32_t;   // Evaluation score in centipawns
 
     // Special score values
     constexpr Score CHECKMATE = 32700;

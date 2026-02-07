@@ -48,16 +48,16 @@ public:
     void set_config(const SearchConfig& config) const ;
     [[nodiscard]] SearchConfig get_config() const;
     void set_tt_size(int mb) const;
-    void clear_cache();
+    void clear_cache() const;
 
-    SearchResult find_best_move(const Board& board, std::chrono::milliseconds time_limit);
-    SearchResult find_best_move_depth(const Board& board, Depth max_depth);
-    SearchResult find_best_move(const Board& board, int max_depth, std::chrono::milliseconds time_limit);
+    [[nodiscard]] SearchResult find_best_move(Board board, std::chrono::milliseconds time_limit) const;
+    [[nodiscard]] SearchResult find_best_move(Board board, Depth max_depth) const;
+    [[nodiscard]] SearchResult find_best_move(Board board, int max_depth, std::chrono::milliseconds time_limit) const;
 
-    Score evaluate(const Board& board);
+    [[nodiscard]] Score evaluate(const Board& board) const;
 
-    std::vector<Move> get_principal_variation(const Board& board, int depth);
-    MoveList get_ranked_moves(const Board& board);
+    [[nodiscard]] std::vector<Move> get_principal_variation(Board board, int depth) const;
+    [[nodiscard]] MoveList get_ranked_moves(const Board& board) const;
 
     struct Analysis {
         Move best_move;
@@ -67,10 +67,10 @@ public:
         std::vector<std::pair<Move, Score>> move_scores;
     };
 
-    Analysis analyze(const Board& board, int depth);
+    [[nodiscard]] Analysis analyze(const Board& board, int depth) const;
 
     void set_progress_callback(const std::function<void(int depth, uint64_t nodes)>& callback);
-    void stop_search();
+    void stop_search() const;
 
 private:
     class Impl;

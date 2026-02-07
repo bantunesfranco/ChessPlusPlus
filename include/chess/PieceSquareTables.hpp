@@ -193,15 +193,29 @@ namespace chess {
         }
 
 
-        int get_midgame_value(const PieceType pt, const Square sq, const Color c) const {
-            return c == Color::WHITE ? midgame_tables[(int)pt][(int)sq] : midgame_tables[(int)pt][63 - (int)sq];
+        [[nodiscard]] int get_midgame_value(const PieceType pt, const Square sq, const Color c) const {
+            if (c == Color::WHITE)
+                return midgame_tables[(int)pt][(int)sq];
+
+            // Flip rank only (not entire square)
+            const int file = (int)sq % 8;
+            const int rank = 7 - ((int)sq / 8);
+            const int flipped = rank * 8 + file;
+            return midgame_tables[(int)pt][flipped];
         }
 
-        int get_endgame_value(const PieceType pt, const Square sq, const Color c) const {
-            return c == Color::WHITE ? endgame_tables[(int)pt][(int)sq] : endgame_tables[(int)pt][63 - (int)sq];
+        [[nodiscard]] int get_endgame_value(const PieceType pt, const Square sq, const Color c) const {
+            if (c == Color::WHITE)
+                return endgame_tables[(int)pt][(int)sq];
+
+            // Flip rank only
+            const int file = (int)sq % 8;
+            const int rank = 7 - ((int)sq / 8);
+            const int flipped = rank * 8 + file;
+            return endgame_tables[(int)pt][flipped];
         }
 
-        int get_value(const PieceType pt, const Square sq, const Color c, const int phase) const {
+        [[nodiscard]] int get_value(const PieceType pt, const Square sq, const Color c, const int phase) const {
             // Interpolate between midgame and endgame, phase ranges from 0 (endgame) to 256 (midgame)
             const int mg_score = get_midgame_value(pt, sq, c);
             const int eg_score = get_endgame_value(pt, sq, c);
