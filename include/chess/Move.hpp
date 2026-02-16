@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <ostream>
 #include <stdexcept>
 
 #include "types.hpp"
@@ -28,6 +29,8 @@ namespace chess {
         [[nodiscard]] MoveFlag flag() const { return MoveFlag((data >> 12) & 0x7); }
         [[nodiscard]] PieceType promotion() const { return PieceType((data >> 15) & 0x7); }
 
+        [[nodiscard]] bool is_valid() const { return from() != to(); }
+
         // Query methods
         [[nodiscard]] bool is_capture() const { return flag() == MoveFlag::CAPTURE; }
         [[nodiscard]] bool is_promotion() const { return flag() == MoveFlag::PROMOTION; }
@@ -43,7 +46,10 @@ namespace chess {
         static Move from_uci(const std::string& uci_str);
 
         [[nodiscard]] uint32_t raw() const { return data; }
+
     };
+
+     static auto INVALID_MOVE = Move(Square::INVALID, Square::INVALID, MoveFlag::NORMAL, PieceType::NONE);
 
     // Move list for generator
     class MoveList {
@@ -80,3 +86,11 @@ namespace chess {
         Hash old_hash;
     };
 }  // namespace chess
+
+inline std::ostream& operator<<(std::ostream& os, const chess::Move& m)
+{
+    os << square_to_string(m.from())
+        << std::string(m.is_capture() ? "x" : "")
+        << square_to_string(m.to());
+    return os;
+}

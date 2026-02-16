@@ -4,6 +4,7 @@
 #include <random>
 
 #include "types.hpp"
+#include "internal/Bitboard.hpp"
 
 namespace chess
 {
@@ -13,10 +14,10 @@ namespace chess
 
     class ZobristHasher {
     private:
-        std::array<std::array<Hash, 64>, 12> piece_hashes{};   // [piece][square]
-        std::array<Hash, 16> castle_hashes{};                  // [castle_rights]
-        std::array<Hash, 8> en_passant_hashes{};               // [en_passant_file] (no hash if none)
-        Hash black_move_hash;
+        static inline std::array<std::array<Hash, 64>, 12> piece_hashes{};   // [piece][square]
+        static inline std::array<Hash, 16> castle_hashes{};                  // [castle_rights]
+        static inline std::array<Hash, 8> en_passant_hashes{};               // [en_passant_file] (no hash if none)
+        static inline Hash black_move_hash;
 
     public:
         ZobristHasher() {
@@ -32,7 +33,8 @@ namespace chess
             black_move_hash = dist(rng);
         }
 
-        [[nodiscard]] Hash compute(const Position& pos) const {
+        [[nodiscard]] static Hash compute(const Position& pos)
+        {
             Hash h = 0;
 
             // Hash pieces
@@ -40,7 +42,7 @@ namespace chess
                 for (int piece = 0; piece < 6; ++piece) {
                     Bitboard bb = pos.pieces[color][piece];
                     while (bb) {
-                        const int sq = bb & 1;
+                        const int sq = internal::lsb(bb);
                         h ^= piece_hashes[color * 6 + piece][sq];
                         bb &= bb - 1;  // Clear LSB
                     }
@@ -61,28 +63,28 @@ namespace chess
             return h;
         }
 
-        [[nodiscard]] Hash update(
+        [[nodiscard]] static Hash update(
             Hash h,
             const Move& move,
             const Piece moved_piece, const Piece captured_piece,
             const uint8_t old_castle_rights, const uint8_t new_castle_rights,
             const Square old_en_passant, const Square new_en_passant
-        ) const {
+        )
+        {
             // Remove piece from source
             h ^= piece_hashes[(int)moved_piece][(int)move.from()];
-
-            // Add piece to destination
-            h ^= piece_hashes[(int)moved_piece][(int)move.to()];
-
-            // Handle capture
-            if (captured_piece != Piece::NONE) {
-                h ^= piece_hashes[(int)captured_piece][(int)move.to()];
-            }
 
             // Handle promotion
             if (move.flag() == MoveFlag::PROMOTION) {
                 Piece promoted = make_piece(get_piece_color(moved_piece), move.promotion());
                 h ^= piece_hashes[(int)promoted][(int)move.to()];
+            }
+            else
+                h ^= piece_hashes[(int)moved_piece][(int)move.to()];
+
+            // Handle capture
+            if (captured_piece != Piece::NONE) {
+                h ^= piece_hashes[(int)captured_piece][(int)move.to()];
             }
 
             // Handle en passant capture

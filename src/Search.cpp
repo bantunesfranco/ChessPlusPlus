@@ -12,6 +12,25 @@
 
 namespace chess {
 
+constexpr Score MATE_THRESHOLD = CHECKMATE - 1000;
+
+inline Score score_to_tt(Score score, Depth depth) {
+    if (score > MATE_THRESHOLD)
+        return score + depth;     // mate for us
+    if (score < -MATE_THRESHOLD)
+        return score - depth;     // mate for opponent
+    return score;
+}
+
+inline Score score_from_tt(Score score, Depth depth) {
+    if (score > MATE_THRESHOLD)
+        return score - depth;
+    if (score < -MATE_THRESHOLD)
+        return score + depth;
+    return score;
+}
+
+
 // ============================================================================
 // Internal Search Helpers (Private to Search.cpp)
 // ============================================================================
@@ -93,9 +112,9 @@ public:
     SearchResult search_iterative(Board& board, std::chrono::milliseconds time_limit);
     SearchResult search_fixed_depth(Board& board, Depth max_depth);
 
-    Score negamax(Board& board, Depth depth, Score alpha, Score beta);
+    Score negamax(Board& board, Depth depth, Depth ply, Score alpha, Score beta);
     Score quiescence(Board& board, Score alpha, Score beta);
-    Score evaluate(const Board& board);
+    [[nodiscard]] Score evaluate(const Board& board) const;
 
     void order_moves(MoveList& moves, const Board& board, Move ttmove) const;
 
@@ -160,142 +179,159 @@ int Engine::Impl::move_score(const Move& move, const Board& board, const Move tt
     return history.get_score(move.from(), move.to());
 }
 
-// ============================================================================
-// Quiescence Search - Handle Tactical Positions
-// ============================================================================
-
-Score Engine::Impl::quiescence(Board& board, Score alpha, const Score beta) {
-    if (stop_requested) return 0;
+Score Engine::Impl::quiescence(Board& board, Score alpha, Score beta) {
+    if (stop_requested)
+        return 0;
 
     stats.nodes++;
 
-    // Check terminal states
     if (board.is_checkmate())
-        return board.side_to_move() == Color::WHITE ? -CHECKMATE : CHECKMATE;
-
+        return -CHECKMATE;
     if (board.is_stalemate())
-        return STALEMATE;
+        return 0;
 
-    // Stand-pat: position value without any moves
-    const Score stand_pat = evaluate(board);
+    Score stand_pat = evaluate(board);
 
     if (stand_pat >= beta)
-        return beta;  // Pruning
-
-    if (alpha < stand_pat)
+        return beta;
+    if (stand_pat > alpha)
         alpha = stand_pat;
 
-    // Only generate capture moves in quiescence
-    MoveList captures;
-    board.generate_captures(captures);
+    MoveList moves;
+    // Include captures and checks in quiescence
+    board.generate_captures(moves);
+    board.generate_checks(moves);
 
-    // Try each capture
-    for (const auto capture : captures) {
-        board.make_move(capture);
+    // MVV/LVA ordering
+    std::ranges::sort(moves, [&](const Move& a, const Move& b) {
+        const Piece victimA = board.piece_at(a.to());
+        const Piece victimB = board.piece_at(b.to());
+        const Piece attackerA = board.piece_at(a.from());
+        const Piece attackerB = board.piece_at(b.from());
+        int scoreA = PIECE_VALUES[(int)get_piece_type(victimA)] * 10 - PIECE_VALUES[(int)get_piece_type(attackerA)];
+        int scoreB = PIECE_VALUES[(int)get_piece_type(victimB)] * 10 - PIECE_VALUES[(int)get_piece_type(attackerB)];
+        return scoreA > scoreB;
+    });
 
-        const Score score = -quiescence(board, -beta, -alpha);
+    for (const auto& move : moves) {
+        board.make_move(move);
+        Score score = -quiescence(board, -beta, -alpha);
         board.undo_move();
 
-        if (score >= beta) {
+        if (score >= beta)
             return beta;
-        }
-        if (score > alpha) {
+        if (score > alpha)
             alpha = score;
-        }
     }
 
     return alpha;
 }
 
-// ============================================================================
-// Main Search - Negamax with Alpha-Beta Pruning
-// ============================================================================
+Score Engine::Impl::negamax(Board& board, Depth depth, const Depth ply, Score alpha, Score beta) {
+    if (stop_requested)
+        return 0;
 
-Score Engine::Impl::negamax(Board& board, Depth depth, Score alpha, const Score beta) {
-    if (stop_requested) return 0;
+    const Score original_alpha = alpha;
 
     // Transposition table lookup
-    const auto tt_entry = ttable.lookup(board.zobrist_hash(), depth);
-    if (tt_entry && tt_entry->depth >= depth) {
-        stats.tt_hits++;
-        return tt_entry->score;
+    Move ttmove = INVALID_MOVE;
+    if (config.use_transposition_table) {
+        if (auto entry = ttable.lookup(board.zobrist_hash(), depth)) {
+            ttmove = entry->best_move;
+            Score tt_score = score_from_tt(entry->score, depth);
+
+            if (entry->flag == EXACT)
+                return tt_score;
+            else if (entry->flag == LOWER_BOUND)
+                alpha = std::max(alpha, tt_score);
+            else if (entry->flag == UPPER_BOUND)
+                beta = std::min(beta, tt_score);
+
+            if (alpha >= beta)
+                return tt_score;
+        }
     }
 
     stats.nodes++;
 
-    // Terminal states
     if (board.is_checkmate())
-        return -CHECKMATE;
-
+        return -CHECKMATE + ply;
     if (board.is_stalemate() || board.is_50_move_draw())
         return 0;
 
-    // Depth limit - enter quiescence search
-    if (depth == 0) {
-        if (config.use_quiescence_search)
-            return quiescence(board, alpha, beta);
-        return evaluate(board);
-    }
+    // Check extension: +1 ply if in check
+    if (board.is_in_check())
+        depth += 1;
 
-    // Generate moves
+    if (depth <= 0)
+        return quiescence(board, alpha, beta);
+
     MoveList moves;
     board.generate_moves(moves);
-
-    assert(!moves.empty());  // Should have been caught by terminal state checks
+    if (moves.empty())
+        return board.is_in_check() ? -CHECKMATE + ply : 0;
 
     // Move ordering
-    Move ttmove = tt_entry ? tt_entry->best_move : Move();
     if (config.use_move_ordering)
         order_moves(moves, board, ttmove);
 
-    Score best_score = std::numeric_limits<Score>::max();
-    Move best_move = moves[0];
-    int moves_searched = 0;
-    Flag flag = EXACT;
+    Score best_score = -50000;
+    Move best_move = INVALID_MOVE;
+    bool first_move = true;
 
-    // Try each move
     for (const auto& move : moves) {
         board.make_move(move);
 
-        // Recursively search
-        const Score score = -negamax(board, depth - 1, -beta, -alpha);
+        int reduction = 0;
+        // LMR: reduce depth for non-captures, non-first moves
+        if (!first_move && depth >= 3 && !move.is_capture() && !board.is_in_check()) {
+            reduction = (depth >= 6) ? 2 : 1;
+        }
+
+        Score score;
+        if (first_move) {
+            score = -negamax(board, depth - 1, ply + 1, -beta, -alpha);
+            first_move = false;
+        } else {
+            // PVS / null-window
+            score = -negamax(board, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha);
+            if (score > alpha)
+                score = -negamax(board, depth - 1, ply + 1, -beta, -alpha);
+        }
 
         board.undo_move();
-
-        moves_searched++;
 
         if (score > best_score) {
             best_score = score;
             best_move = move;
-            flag = EXACT;
         }
 
-        if (best_score > alpha)
-        {
-            alpha = best_score;
-            flag = LOWER_BOUND;
-        }
+        alpha = std::max(alpha, score);
 
-        // Beta cutoff
         if (alpha >= beta) {
             stats.cutoffs++;
-                flag = LOWER_BOUND;
-
-            // Update killer move
             if (!move.is_capture())
-                killers.store(depth, move);
-
+                killers.store(config.max_depth - depth, move);
             break;
         }
     }
 
-    // Update history for quiet moves
-    if (!best_move.is_capture() && moves_searched > 0)
+    if (best_move != INVALID_MOVE && !best_move.is_capture())
         history.store(best_move.from(), best_move.to(), depth);
 
-    // Store in transposition table
-    if (config.use_transposition_table)
-        ttable.store(board.zobrist_hash(), best_score, depth, flag, best_move);
+    // TT flag determination
+    Flag flag;
+    if (best_score <= original_alpha)
+        flag = UPPER_BOUND;
+    else if (best_score >= beta)
+        flag = LOWER_BOUND;
+    else
+        flag = EXACT;
+
+    if (config.use_transposition_table) {
+        const Score stored_score = score_to_tt(best_score, depth);
+        ttable.store(board.zobrist_hash(), stored_score, depth, flag, best_move);
+    }
 
     return best_score;
 }
@@ -307,68 +343,93 @@ Score Engine::Impl::negamax(Board& board, Depth depth, Score alpha, const Score 
 SearchResult Engine::Impl::search_iterative(Board& board, const std::chrono::milliseconds time_limit) {
     stats.start_time = std::chrono::high_resolution_clock::now();
     stop_requested = false;
+    stats.nodes = 0;
 
-    SearchResult best_result;
-    best_result.best_move = Move();
-    best_result.score = 0;
-    best_result.depth = 0;
-    best_result.nodes_searched = 0;
+    SearchResult best_result{};
 
-    // Iterative deepening: search depth 1, 2, 3, ... until time runs out
     for (int depth = 1; depth <= config.max_depth; ++depth) {
-        history.clear();
-        killers.clear();
-
-        // Alpha-beta window
-        Score alpha = -50000;
-        Score beta = 50000;
-
-        // Root search at this depth
         MoveList moves;
         board.generate_moves(moves);
 
-        if (moves.empty()) {
-            break;  // No legal moves
+        if (moves.empty())
+            break;
+
+        Score alpha = -50000;
+        Score beta = 50000;
+
+        Score best_score = -50000;
+        Move best_move = INVALID_MOVE;
+
+        // Root TT move
+        Move ttmove = INVALID_MOVE;
+        if (config.use_transposition_table) {
+            if (auto entry = ttable.lookup(board.zobrist_hash(), 0))
+                ttmove = entry->best_move;
         }
 
-        Score best_score = INT_MIN;
-        Move best_move = moves[0];
+        if (config.use_move_ordering)
+            order_moves(moves, board, ttmove);
+
+        bool first_move = true;
+        int move_count = 0;
 
         for (const auto& move : moves) {
+            move_count++;
             board.make_move(move);
-            const Score score = -negamax(board, depth - 1, -beta, -alpha);
+            Score score;
+
+            int reduction = 0;
+
+            // Apply LMR at root: skip TT move and first move
+            if (!first_move && move_count > 2 && depth >= 3 && !move.is_capture()) {
+                reduction = (depth >= 6) ? 2 : 1;
+            }
+
+            if (first_move) {
+                score = -negamax(board, depth - 1, 1, -beta, -alpha);
+                first_move = false;
+            } else {
+                // Reduced-depth null-window search
+                score = -negamax(board, depth - 1 - reduction, 1, -alpha - 1, -alpha);
+
+                // If null-window fails high, re-search with full depth/window
+                if (score > alpha)
+                    score = -negamax(board, depth - 1, 1, -beta, -alpha);
+            }
+
             board.undo_move();
 
             if (score > best_score) {
                 best_score = score;
                 best_move = move;
-                alpha = best_score;
             }
+
+            alpha = std::max(alpha, score);
+
+            if (alpha >= beta)
+                break;
         }
 
-        // Update result
+        if (best_move != INVALID_MOVE)
+            history.store(best_move.from(), best_move.to(), depth);
+
         best_result.best_move = best_move;
         best_result.score = best_score;
         best_result.depth = depth;
         best_result.nodes_searched = stats.nodes;
         best_result.search_time = stats.elapsed_seconds();
 
-        // Report iteration
-        std::cout << "Depth " << depth << ": "
-                 << square_to_string(best_move.from()) << "-" << square_to_string(best_move.to())
-                 << " (score: " << best_score << ", nodes: " << stats.nodes
-                 << ", time: " << best_result.search_time << "s)" << std::endl;
-
         if (config.on_iteration_complete)
             config.on_iteration_complete(best_result);
 
-        // Check time limit
+        // Stop if time exceeded
         if (stats.elapsed_seconds() * 1000 > time_limit.count())
             break;
     }
 
     return best_result;
 }
+
 
 // ============================================================================
 // Fixed Depth Search
@@ -378,21 +439,41 @@ SearchResult Engine::Impl::search_fixed_depth(Board& board, const Depth max_dept
     stats.start_time = std::chrono::high_resolution_clock::now();
     stop_requested = false;
 
-    SearchResult result = {};
-
+    SearchResult result{};
     MoveList moves;
     board.generate_moves(moves);
 
-    if (moves.empty()) {
+    if (moves.empty())
         return result;  // No legal moves
+
+    Score best_score = -50000;
+    Move best_move = INVALID_MOVE;
+
+    // Root move ordering
+    Move ttmove = INVALID_MOVE;
+    if (config.use_transposition_table) {
+        if (auto entry = ttable.lookup(board.zobrist_hash(), 0))
+            ttmove = entry->best_move;
     }
 
-    Score best_score = INT_MIN;
-    Move best_move = moves[0];
+    if (config.use_move_ordering)
+        order_moves(moves, board, ttmove);
+
+    bool first_move = true;
 
     for (const auto& move : moves) {
         board.make_move(move);
-        Score score = -negamax(board, max_depth - 1, (Score)-50000, (Score)50000);
+        Score score;
+
+        if (first_move) {
+            score = -negamax(board, max_depth - 1, 1, -50000, 50000);
+            first_move = false;
+        } else {
+            score = -negamax(board, max_depth - 1, 1, -best_score - 1, -best_score);
+            if (score > best_score)
+                score = -negamax(board, max_depth - 1, 1, -50000, 50000);
+        }
+
         board.undo_move();
 
         if (score > best_score) {
@@ -400,6 +481,10 @@ SearchResult Engine::Impl::search_fixed_depth(Board& board, const Depth max_dept
             best_move = move;
         }
     }
+
+    // Store history heuristic for best root move
+    if (best_move != INVALID_MOVE && !best_move.is_capture())
+        history.store(best_move.from(), best_move.to(), max_depth);
 
     result.best_move = best_move;
     result.score = best_score;
@@ -410,9 +495,8 @@ SearchResult Engine::Impl::search_fixed_depth(Board& board, const Depth max_dept
     return result;
 }
 
-Score Engine::Impl::evaluate(const Board& board) {
-    // Negate score for negamax
-    return evaluator.evaluate(board);
+Score Engine::Impl::evaluate(const Board& board) const {
+    return evaluator.evaluate(board);;
 }
 
 // ============================================================================

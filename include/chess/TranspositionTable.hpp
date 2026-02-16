@@ -34,7 +34,8 @@ namespace chess {
 
         void store(const Hash h, const Score s, const Depth d, const Flag f, const Move m) {
             TTEntry& entry = table[h & mask];
-            entry = {h, s, d, f, m};
+            if (entry.key != h || d >= entry.depth)
+                entry = {h, s, d, f, m};
         }
 
         [[nodiscard]] std::optional<TTEntry> lookup(const Hash h, const Depth d) const {

@@ -3,12 +3,15 @@
 #include <array>
 #include <string>
 #include <cstdint>
+#include <unordered_map>
 
-namespace chess {
-    // Basic enumerations
-    enum class Color : uint8_t { WHITE = 0, BLACK = 1 };
+namespace chess
+{
+    enum Color : uint8_t { WHITE = 0, BLACK = 1 };
+    static constexpr inline std::array COLORS = {WHITE, BLACK};
+    static constexpr inline std::array<std::string, 2> COLOR_NAMES = {"white", "black"};
 
-    enum class Square : uint8_t {
+    enum Square : uint8_t {
         A1, B1, C1, D1, E1, F1, G1, H1,
         A2, B2, C2, D2, E2, F2, G2, H2,
         A3, B3, C3, D3, E3, F3, G3, H3,
@@ -17,16 +20,56 @@ namespace chess {
         A6, B6, C6, D6, E6, F6, G6, H6,
         A7, B7, C7, D7, E7, F7, G7, H7,
         A8, B8, C8, D8, E8, F8, G8, H8,
-        INVALID = 64
     };
 
-    enum class PieceType : uint8_t { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, NONE };
-
-    enum class Piece : uint8_t {
-        WHITE_PAWN, WHITE_KNIGHT, WHITE_BISHOP, WHITE_ROOK, WHITE_QUEEN, WHITE_KING,
-        BLACK_PAWN, BLACK_KNIGHT, BLACK_BISHOP, BLACK_ROOK, BLACK_QUEEN, BLACK_KING,
-        NONE = 12
+    static constexpr inline std::array SQUARES = {
+        A1, B1, C1, D1, E1, F1, G1, H1,
+        A2, B2, C2, D2, E2, F2, G2, H2,
+        A3, B3, C3, D3, E3, F3, G3, H3,
+        A4, B4, C4, D4, E4, F4, G4, H4,
+        A5, B5, C5, D5, E5, F5, G5, H5,
+        A6, B6, C6, D6, E6, F6, G6, H6,
+        A7, B7, C7, D7, E7, F7, G7, H7,
+        A8, B8, C8, D8, E8, F8, G8, H8,
     };
+
+    static constexpr inline std::array<std::string, 64> SQUARE_NAMES = {
+        "a1", "b1", "c1", "d1", "e1", "f1", "g1", "h1",
+        "a2", "b2", "c2", "d2", "e2", "f2", "g2", "h2",
+        "a3", "b3", "c3", "d3", "e3", "f3", "g3", "h3",
+        "a4", "b4", "c4", "d4", "e4", "f4", "g4", "h4",
+        "a5", "b5", "c5", "d5", "e5", "f5", "g5", "h5",
+        "a6", "b6", "c6", "d6", "e6", "f6", "g6", "h6",
+        "a7", "b7", "c7", "d7", "e7", "f7", "g7", "h7",
+        "a8", "b8", "c8", "d8", "e8", "f8", "g8", "h8",
+    };
+
+    enum File : uint8_t { FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H };
+    static constexpr inline std::array FILES = { FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H };
+    static constexpr inline std::array<std::string, 8> FILE_NAMES = {"a", "b", "c", "d", "e", "f", "g", "h"};
+
+    enum Rank : uint8_t { RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8 };
+
+    static constexpr inline std::array RANKS = {RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8};
+    static constexpr inline std::array<std::string, 8> RANK_NAMES = {"1", "2", "3", "4", "5", "6", "7", "8"};
+
+    enum PieceType : uint8_t { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, NONE };
+    static constexpr inline std::array PIECE_TYPES = {PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING};
+    static constexpr inline std::array<std::string, 7> PIECE_SYMBOLS = {"", "p", "n", "b", "r", "q", "k"};
+    static constexpr inline std::array<std::string, 7> PIECE_NAMES = {"", "pawn", "knight", "bishop", "rook", "queen", "king"};
+    static const inline std::unordered_map<std::string, std::string> UNICODE_PIECE_SYMBOLS = {
+        {"R", "♖"}, {"r", "♜"},
+        {"N", "♘"}, {"n", "♞"},
+        {"B", "♗"}, {"b", "♝"},
+        {"Q", "♕"}, {"q", "♛"},
+        {"K", "♔"}, {"k", "♚"},
+        {"P", "♙"}, {"p", "♟"},
+   };
+
+    /*The FEN for the standard chess starting position.*/
+    static const std::string STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    /*The board part of the FEN for the standard chess starting position.*/
+    static const std::string STARTING_BOARD_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
 
     using Bitboard = uint64_t;  // 64-bit bitboard
     using Depth    = int8_t;    // Search depth

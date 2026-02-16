@@ -1,43 +1,128 @@
 #include "include/chess.hpp"
 
+#include <cassert>
 #include <iostream>
 
 using namespace std;
 using namespace chess;
+using namespace std::chrono_literals;
+
+Square square_from_string(std::string s)
+{
+    int col = std::tolower(s[0]) - 'a';
+    int row = s[1] - '0';
+
+    return (Square)((row-1)*8 + col);
+}
+
+Move str_to_move(const std::string& input)
+{
+    auto flag = MoveFlag::NORMAL;
+    int n = 2;
+    const std::string from = input.substr(0, n);
+    if (input.size() == 5)
+    {
+        n++;
+        flag = MoveFlag::CAPTURE;
+    }
+    const std::string to = input.substr(n);
+
+    Square sq_from = square_from_string(from);
+    Square sq_to = square_from_string(to);
+
+    return {sq_from, sq_to, flag};
+}
 
 void test_board()
 {
-
+    Engine engine;
     Board board;
-    // Position with en passant available
-    board.load_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
+    board.reset();
 
-    std::cout << "Initial position:\n" << board.to_string() << std::endl;
+    std::cout << board << std::endl;
 
-    Move d5(Square::D7, Square::D5, MoveFlag::NORMAL);
-    board.make_move(d5);
+    while (!board.is_game_over())
+    {
+        std::string input;
+        std::cin >> input;
+        input = input.substr(input.find_first_not_of(" \n\t\b\v"), input.size() - input.find_first_of("\n"));
 
-    std::cout << "\n\nAfter 1...d5:\n" << board.to_string() << std::endl;
+        Move move = str_to_move(input);
+        std::cout << move << std::endl;
+        board.make_move(move);
+        std::cout << board << std::endl;
 
-    Move e4d5(Square::E4, Square::D5, MoveFlag::CAPTURE);
-    board.make_move(e4d5);
+        move = engine.find_best_move(board, 5ms).best_move;
+        std::cout << move << std::endl;
+        board.make_move(move);
+        std::cout << board << std::endl;
+    }
 
-    std::cout << "\n\nAfter 2...e4:\n" << board.to_string() << std::endl;
+    std::cout << board.game_result().value() << std::endl;
+}
 
-    // Push another pawn move to set up en passant for white
-    Move c5 (Square::C7, Square::C5, MoveFlag::NORMAL);
-    board.make_move(c5);
+void test_moves()
+{
+    std::string positions[] = {
+        "1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - - 0 1",
+        "3r1k2/4npp1/1ppr3p/p6P/P2PPPP1/1NR5/5K2/2R5 w - - 0 1",
+        "2q1rr1k/3bbnnp/p2p1pp1/2pPp3/PpP1P1P1/1P2BNNP/2BQ1PRK/7R b - - 0 1",
+        "rnbqkb1r/p3pppp/1p6/2ppP3/3N4/2P5/PPP1QPPP/R1B1KB1R w KQkq - 0 1",
+        "r1b2rk1/2q1b1pp/p2ppn2/1p6/3QP3/1BN1B3/PPP3PP/R4RK1 w - - 0 1",
+        "2r3k1/pppR1pp1/4p3/4P1P1/5P2/1P4K1/P1P5/8 w - - 0 1",
+        "1nk1r1r1/pp2n1pp/4p3/q2pPp1N/b1pP1P2/B1P2R2/2P1B1PP/R2Q2K1 w - - 0 1",
+        "4b3/p3kp2/6p1/3pP2p/2pP1P2/4K1P1/P3N2P/8 w - - 0 1",
+        "2kr1bnr/pbpq4/2n1pp2/3p3p/3P1P1B/2N2N1Q/PPP3PP/2KR1B1R w - - 0 1",
+        "3rr1k1/pp3pp1/1qn2np1/8/3p4/PP1R1P2/2P1NQPP/R1B3K1 b - - 0 1",
+        "2r1nrk1/p2q1ppp/bp1p4/n1pPp3/P1P1P3/2PBB1N1/4QPPP/R4RK1 w - - 0 1",
+        "r3r1k1/ppqb1ppp/8/4p1NQ/8/2P5/PP3PPP/R3R1K1 b - - 0 1",
+        "r2q1rk1/4bppp/p2p4/2pP4/3pP3/3Q4/PP1B1PPP/R3R1K1 w - - 0 1",
+        "rnb2r1k/pp2p2p/2pp2p1/q2P1p2/8/1Pb2NP1/PB2PPBP/R2Q1RK1 w - - 0 1",
+        "2r3k1/1p2q1pp/2b1pr2/p1pp4/6Q1/1P1PP1R1/P1PN2PP/5RK1 w - - 0 1",
+        "r1bqkb1r/4npp1/p1p4p/1p1pP1B1/8/1B6/PPPN1PPP/R2Q1RK1 w kq - 0 1",
+        "r2q1rk1/1ppnbppp/p2p1nb1/3Pp3/2P1P1P1/2N2N1P/PPB1QP2/R1B2RK1 b - - 0 1",
+        "r1bq1rk1/pp2ppbp/2np2p1/2n5/P3PP2/N1P2N2/1PB3PP/R1B1QRK1 b - - 0 1",
+        "3rr3/2pq2pk/p2p1pnp/8/2QBPP2/1P6/P5PP/4RRK1 b - - 0 1",
+        "r4k2/pb2bp1r/1p1qp2p/3pNp2/3P1P2/2N3P1/PPP1Q2P/2KRR3 w - - 0 1",
+        "3rn2k/ppb2rpp/2ppqp2/5N2/2P1P3/1P5Q/PB3PPP/3RR1K1 w - - 0 1",
+        "2r2rk1/1bqnbpp1/1p1ppn1p/pP6/N1P1P3/P2B1N1P/1B2QPP1/R2R2K1 b - - 0 1",
+        "r1bqk2r/pp2bppp/2p5/3pP3/P2Q1P2/2N1B3/1PP3PP/R4RK1 b kq - 0 1",
+        "r2qnrnk/p2b2b1/1p1p2pp/2pPpp2/1PP1P3/PRNBB3/3QNPPP/5RK1 w - - 0 1",
+    };
 
-    std::cout << "\n\nAfter 3...c5:\n" << board.to_string() << std::endl;
+    std::string solutions[] = {"Qd1+","d5","f5","e6","a4","g6","Nf6","f5","f5","Ne5","f4","Bf5","b4",
+             "Qd2 Qe1","Qxg7+","Ne4","h5","Nb3","Rxe4","g4","Nh6","Bxe4","f6","f4"};
 
-    // White captures en passant: d5xc6
-    Move d5c6_ep(Square::D5, Square::C6, MoveFlag::EN_PASSANT);
-    board.make_move(d5c6_ep);
 
-    std::cout << "\n\nAfter 4...c6:\n" << board.to_string() << std::endl;
+    Engine engine;
+    Board board;
+
+    int res = 0;
+    size_t total =  std::size(solutions);
+    for (size_t i = 0; i < total; i++)
+    {
+        auto& pos = positions[i];
+        board.load_fen(pos);
+        try
+        {
+            auto m = engine.find_best_move(board, 500ms).best_move;
+            std::cout << "Got: " << board.move_to_san(m) << ", expected: " << solutions[i];
+            const int ok = board.move_to_san(m) == solutions[i];
+            res += ok;
+            std::cout << " " << (ok ? "OK" : "KO") << std::endl;
+        } catch( std::exception & e )
+        {
+            std::cout << e.what() << std::endl;
+        }
+
+        std::cout << "------------------------------------------------" << std::endl;
+    }
+
+    std::cout << "Score: " << res << "/" << total << std::endl;
 }
 
 int main()
 {
-    test_board();
+    // test_board();
+    test_moves();
 }

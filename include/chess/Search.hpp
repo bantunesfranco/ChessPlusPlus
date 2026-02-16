@@ -12,14 +12,15 @@
 namespace chess {
 
 inline constexpr int MAX_DEPTH = 32;
+inline constexpr int TT_SIZE = 64;  // in MB
 
 // ============================================================================
 // Search Configuration & Results
 // ============================================================================
 
 struct SearchResult {
-    Move best_move;
-    Score score;
+    Move best_move = INVALID_MOVE;
+    Score score = INT_MIN;
     Depth depth;
     uint64_t nodes_searched;
     double search_time;
@@ -27,8 +28,8 @@ struct SearchResult {
 
 struct SearchConfig {
     std::chrono::milliseconds time_limit = std::chrono::milliseconds(5000);
-    int max_depth = 20;
-    int tt_size_mb = 64;
+    int max_depth = MAX_DEPTH;
+    int tt_size_mb = TT_SIZE;
     bool use_transposition_table = true;
     bool use_quiescence_search = true;
     bool use_move_ordering = true;

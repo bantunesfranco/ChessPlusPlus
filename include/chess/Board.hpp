@@ -67,17 +67,18 @@ public:
 
     /// Generate only capture moves
     void generate_captures(MoveList& moves) const;
+    void generate_checks(MoveList& moves) const;
 
     /// Check if a move is legal
     [[nodiscard]] bool is_legal_move(Move move) const;
 
     /// Make a move (modifies board state)
     /// @throws std::invalid_argument if move is illegal
-    void make_move(Move move) const;
+    void make_move(Move move);
 
     /// Undo the last move
     /// @throws std::runtime_error if no moves to undo
-    void undo_move() const;
+    void undo_move();
 
     /// Get move history
     [[nodiscard]] std::vector<Move> move_history() const;
@@ -92,6 +93,9 @@ public:
 
     /// Is current position checkmate?
     [[nodiscard]] bool is_checkmate() const;
+
+    /// Is current position a draw?
+    [[nodiscard]] bool is_draw() const;
 
     /// Is current position stalemate?
     [[nodiscard]] bool is_stalemate() const;
@@ -123,6 +127,9 @@ public:
 
     /// Check if position is legal (no double checks, etc)
     [[nodiscard]] bool is_valid_position() const;
+    std::string move_to_san(const Move& move);
+
+    // === Stream Operator ===
 
 private:
     // Internal state (opaque to user)
@@ -131,3 +138,5 @@ private:
 };
 
 }  // namespace chess
+
+std::ostream& operator<<(std::ostream& os, const chess::Board& board);

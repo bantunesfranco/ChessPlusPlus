@@ -1,5 +1,7 @@
 #include "chess/Eval.hpp"
 
+#include <bits/regex_constants.h>
+
 #include "chess/PieceSquareTables.hpp"
 
 namespace chess
@@ -17,9 +19,10 @@ namespace chess
     class Evaluator::Impl
     {
         private:
-            const PieceSquareTables& pst;
+            const PieceSquareTables pst;
 
         public:
+            Impl() : pst(PieceSquareTables()) {};
             explicit Impl(const PieceSquareTables& pst) : pst(pst) {}
 
             Score evaluate(const Board& board);
@@ -31,6 +34,12 @@ namespace chess
     Score Evaluator::Impl::evaluate(const Board& board) {
         Score score = 0;
         const double phase = get_game_phase(board);
+
+        if (board.is_checkmate()) // If white is to move and in checkmate, black won
+            return (board.side_to_move() == Color::WHITE) ? -CHECKMATE : CHECKMATE;
+
+        if (board.is_draw())
+            return 0;
 
         // Evaluate material and position
         for (const Color color : {Color::WHITE, Color::BLACK}) {
@@ -57,12 +66,12 @@ namespace chess
     Score Evaluator::Impl::get_material(const Board& board, const Color color)
     {
         Score material = 0;
-        const double phase = get_game_phase(board);
+        // const double phase = get_game_phase(board);
         for (const auto sq : board.pieces_of_color(color)) {
             const Piece p = board.piece_at(sq);
             const PieceType pt = get_piece_type(p);
 
-            material += pst.get_value(pt, sq, color, phase);
+            material += PIECE_VALUES[(int)pt];
         }
         return material;
     }
@@ -83,10 +92,7 @@ namespace chess
     }
 
 
-    Evaluator::Evaluator() {
-        PieceSquareTables pst;
-        impl = std::make_unique<Impl>(pst);
-    }
+    Evaluator::Evaluator() : impl(std::make_unique<Impl>()) {}
 
     Evaluator::Evaluator(const PieceSquareTables& pst): impl(std::make_unique<Impl>(pst)) {}
 
@@ -97,17 +103,26 @@ namespace chess
         return impl->evaluate(board);
     }
 
-    Score Evaluator::evaluate_white(const Board& board) const
-    {
-        Score eval = impl->evaluate(board);
-        if (board.side_to_move() == Color::WHITE)
-            eval = -eval;
-        return eval;
-    }
+    // Score Evaluator::evaluate_white(const Board& board) const
+    // {
+    //     Score eval = impl->evaluate(board);
+    //     if (board.side_to_move() == Color::WHITE)
+    //         eval = -eval;
+    //     return eval;
+    // }
 
     Score Evaluator::material_count(const Board& board) const
     {
         return impl->get_material(board, board.side_to_move());
+    }
+
+    Score Evaluator::total_material_count(const Board& board) const
+    {
+        const Color player = board.side_to_move();
+        const Color opponent = player == Color::WHITE ? Color::BLACK : Color::WHITE;
+        if (player == Color::WHITE)
+            return impl->get_material(board, player) - impl->get_material(board, opponent);
+        return impl->get_material(board, opponent) - impl->get_material(board, player);
     }
 
     double Evaluator::get_phase(const Board& board) const

@@ -71,8 +71,14 @@ namespace chess
         [[nodiscard]] Piece get_piece_at(Square sq) const;
         [[nodiscard]] std::vector<Square> pieces_of_color(Color color) const;
         [[nodiscard]] std::vector<Square> pieces_of_type(Color color, PieceType type) const;
+        [[nodiscard]] bool is_legal_move(Move move);
+        [[nodiscard]] bool is_in_check(Color color) const;
+        [[nodiscard]] bool is_stalemate();
+        [[nodiscard]] bool is_checkmate();
+        std::string move_to_san(const Move& move);
         [[nodiscard]] std::vector<Move> get_move_history() const;
 
+        void generate_all_moves(MoveList& moves);
         void generate_pseudo_legal_moves(MoveList& moves) const;
         void generate_pawn_moves(Color color, MoveList& moves) const;
         void generate_knight_moves(Color color, MoveList& moves) const;
@@ -80,6 +86,7 @@ namespace chess
         void generate_bishop_moves(Square sq, MoveList& moves) const;
         void generate_rook_moves(Square sq, MoveList& moves) const;
         void generate_queen_moves(Square sq, MoveList& moves) const;
+        void generate_checks(MoveList& moves);
         void generate_castling_moves(Color color, MoveList& moves) const;
 
         [[nodiscard]] bool is_square_attacked_by(Square sq, Color enemy_color) const;
@@ -164,8 +171,9 @@ namespace chess
             while (attacks) {
                 int to_sq = internal::lsb(attacks);
                 auto to = (Square)to_sq;
-
-                if (const Piece target = get_piece_at(to); target != Piece::NONE && get_piece_color(target) != color) {
+                const Piece target = get_piece_at(to);
+                const Piece king = color == Color::BLACK ?  Piece::WHITE_KING : Piece::BLACK_KING;
+                if (target != king && target != Piece::NONE && get_piece_color(target) != color) {
                     // Check promotion capture
                     if (const int rank = (int)to / 8; (color == Color::WHITE && rank == 7) || (color == Color::BLACK && rank == 0)) {
                         moves.add(Move(from, to, MoveFlag::PROMOTION, PieceType::QUEEN));
@@ -196,9 +204,10 @@ namespace chess
                 int to_sq = internal::lsb(attacks);
                 const auto to = (Square)to_sq;
 
+                const Piece king = color == Color::BLACK ?  Piece::WHITE_KING : Piece::BLACK_KING;
                 if (const Piece target = get_piece_at(to); target == Piece::NONE) {
                     moves.add(Move(from, to, MoveFlag::NORMAL));
-                } else if (get_piece_color(target) != color) {
+                } else if (target != king && get_piece_color(target) != color) {
                     moves.add(Move(from, to, MoveFlag::CAPTURE));
                 }
 
@@ -222,9 +231,10 @@ namespace chess
             int to_sq = internal::lsb(attacks);
             const auto to = (Square)to_sq;
 
+            const Piece king = color == Color::BLACK ?  Piece::WHITE_KING : Piece::BLACK_KING;
             if (const Piece target = get_piece_at(to); target == Piece::NONE) {
                 moves.add(Move(from, to, MoveFlag::NORMAL));
-            } else if (get_piece_color(target) != color) {
+            } else if (target != king && get_piece_color(target) != color) {
                 moves.add(Move(from, to, MoveFlag::CAPTURE));
             }
 
@@ -304,9 +314,10 @@ namespace chess
             int to_sq = internal::lsb(attacks);
             const auto to = (Square)to_sq;
 
+            const Piece king = position.side_to_move == Color::BLACK ?  Piece::WHITE_KING : Piece::BLACK_KING;
             if (const Piece target = get_piece_at(to); target == Piece::NONE) {
                 moves.add(Move(sq, to, MoveFlag::NORMAL));
-            } else if (get_piece_color(target) != position.side_to_move) {
+            } else if (target != king && get_piece_color(target) != position.side_to_move) {
                 moves.add(Move(sq, to, MoveFlag::CAPTURE));
             }
 
@@ -320,9 +331,10 @@ namespace chess
             int to_sq = internal::lsb(attacks);
             const auto to = (Square)to_sq;
 
+            const Piece king = position.side_to_move == Color::BLACK ?  Piece::WHITE_KING : Piece::BLACK_KING;;
             if (const Piece target = get_piece_at(to); target == Piece::NONE) {
                 moves.add(Move(sq, to, MoveFlag::NORMAL));
-            } else if (get_piece_color(target) != position.side_to_move) {
+            } else if (target != king && get_piece_color(target) != position.side_to_move) {
                 moves.add(Move(sq, to, MoveFlag::CAPTURE));
             }
 
@@ -336,9 +348,10 @@ namespace chess
             int to_sq = internal::lsb(attacks);
             const auto to = (Square)to_sq;
 
+            const Piece king = position.side_to_move == Color::BLACK ?  Piece::WHITE_KING : Piece::BLACK_KING;;
             if (const Piece target = get_piece_at(to); target == Piece::NONE) {
                 moves.add(Move(sq, to, MoveFlag::NORMAL));
-            } else if (get_piece_color(target) != position.side_to_move) {
+            } else if (target != king && get_piece_color(target) != position.side_to_move) {
                 moves.add(Move(sq, to, MoveFlag::CAPTURE));
             }
 
@@ -346,17 +359,39 @@ namespace chess
         }
     }
 
+    void Board::Impl::generate_checks(MoveList& moves)
+    {
+        MoveList pseudo_moves;
+        generate_pseudo_legal_moves(pseudo_moves);
+
+        for (const Move& move : pseudo_moves) {
+            apply_move(move);
+            if (is_king_under_attack(position.side_to_move))
+                moves.add(move);
+            restore_from_history();
+        }
+    }
+
     bool Board::Impl::is_square_attacked_by(Square sq, Color enemy_color) const
     {
         using namespace internal;
+
         if (KNIGHT_ATTACKS[(int)sq] & position.pieces[(int)enemy_color][(int)PieceType::KNIGHT])
             return true;
 
         if (KING_ATTACKS[(int)sq] & position.pieces[(int)enemy_color][(int)PieceType::KING])
             return true;
 
-        if (PAWN_ATTACKS[(int)enemy_color][(int)sq] & position.pieces[(int)enemy_color][(int)PieceType::PAWN])
-            return true;
+        // Pawns — FIXED
+        Color pawn_dir = enemy_color;
+        Bitboard pawns = position.pieces[(int)pawn_dir][(int)PieceType::PAWN];
+        if (enemy_color == Color::WHITE) {
+            // White pawns attack diagonally upward (sq - 7, sq - 9)
+            if ((pawns & (pawn_attacks_to_square_black(sq))) != 0) return true;
+        } else {
+            // Black pawns attack diagonally downward (sq + 7, sq + 9)
+            if ((pawns & (pawn_attacks_to_square_white(sq))) != 0) return true;
+        }
 
         if (rook_attacks(sq, position.occupancy_all) & position.pieces[(int)enemy_color][(int)PieceType::ROOK])
             return true;
@@ -365,7 +400,7 @@ namespace chess
             return true;
 
         if (queen_attacks(sq, position.occupancy_all) & position.pieces[(int)enemy_color][(int)PieceType::QUEEN])
-                return true;
+            return true;
 
         return false;
     }
@@ -375,8 +410,7 @@ namespace chess
         const Color enemy_color = (king_color == Color::WHITE) ? Color::BLACK : Color::WHITE;
 
         if (king == Square::INVALID)
-            throw std::invalid_argument("Invalid board: no king found");
-
+            return true;  // Treat as in check if no king (invalid position)
         return is_square_attacked_by(king, enemy_color);
     }
 
@@ -566,14 +600,12 @@ namespace chess
         update_occupancy();
     }
 
-    Square Board::Impl::find_king(Color color) const
-    {
+    Square Board::Impl::find_king(Color color) const {
         const Bitboard king_bb = position.pieces[(int)color][(int)PieceType::KING];
-        if (king_bb == 0)
-            return Square::INVALID;  // No king found (invalid board)
-
+        assert(king_bb != 0); // Always expect king to be present
         return (Square)internal::lsb(king_bb);
     }
+
 
     void Board::Impl::update_occupancy() {
         position.occupancy[(int)Color::WHITE] = 0;
@@ -803,6 +835,172 @@ namespace chess
         return squares;
     }
 
+    void Board::Impl::generate_all_moves(MoveList& moves) {
+        MoveList pseudo_legal;
+        generate_pseudo_legal_moves(pseudo_legal);
+
+        moves.clear();
+
+        // Filter each move for legality
+        for (const auto& move : pseudo_legal)
+            if (is_legal_move(move)) moves.add(move);
+    }
+
+    bool Board::Impl::is_legal_move(const Move move) {
+        const Color moving_side = position.side_to_move;
+
+        apply_move(move);
+
+        const bool illegal = is_king_under_attack(moving_side);
+
+        restore_from_history();
+
+        return !illegal;
+    }
+
+    bool Board::Impl::is_in_check(const Color color) const {
+        return is_king_under_attack(color);
+    }
+
+    bool Board::Impl::is_stalemate() {
+       const Color color = position.side_to_move;
+        if (is_in_check(color)) return false;
+
+        MoveList moves;
+        generate_all_moves(moves);
+        return moves.empty();
+    }
+
+    bool Board::Impl::is_checkmate() {
+        const Color color = position.side_to_move;
+        if (!is_in_check(color)) return false;
+
+        MoveList moves;
+        generate_all_moves(moves);
+        return moves.empty();
+    }
+
+    std::string Board::Impl::move_to_san(const Move& move)
+    {
+        if (!move.is_valid())
+            return "--";
+
+        std::string san;
+
+        const Square from = move.from();
+        const Square to   = move.to();
+        const Piece piece = get_piece_at(from);
+        const PieceType type = get_piece_type(piece);
+
+        const bool is_capture =
+            move.flag() == MoveFlag::CAPTURE ||
+            move.flag() == MoveFlag::EN_PASSANT;
+
+        // --------------------------------------------------
+        // Castling
+        // --------------------------------------------------
+        if (move.flag() == MoveFlag::CASTLING) {
+            if (square_file(to) < square_file(from))
+                return "O-O-O";
+            return "O-O";
+        }
+
+        // --------------------------------------------------
+        // Piece letter (not pawn)
+        // --------------------------------------------------
+        if (type != PieceType::PAWN) {
+            switch (type) {
+                case PieceType::KNIGHT: san += "N"; break;
+                case PieceType::BISHOP: san += "B"; break;
+                case PieceType::ROOK:   san += "R"; break;
+                case PieceType::QUEEN:  san += "Q"; break;
+                case PieceType::KING:   san += "K"; break;
+                default: break;
+            }
+
+            // --------------------------------------------------
+            // Disambiguation
+            // --------------------------------------------------
+            MoveList moves;
+            generate_all_moves(moves);
+
+            bool same_file = false;
+            bool same_rank = false;
+            bool ambiguous = false;
+
+            for (const auto& other : moves) {
+                if (other == move)
+                    continue;
+
+                if (other.to() == to &&
+                    get_piece_type(get_piece_at(other.from())) == type)
+                {
+                    ambiguous = true;
+
+                    if (square_file(other.from()) == square_file(from))
+                        same_file = true;
+
+                    if (square_rank(other.from()) == square_rank(from))
+                        same_rank = true;
+                }
+            }
+
+            if (ambiguous) {
+                if (!same_file)
+                    san += char('a' + square_file(from));
+                else if (!same_rank)
+                    san += char('1' + square_rank(from));
+                else {
+                    san += char('a' + square_file(from));
+                    san += char('1' + square_rank(from));
+                }
+            }
+        }
+        else if (is_capture) {
+            // Pawn capture must include file
+            san += char('a' + square_file(from));
+        }
+
+        // --------------------------------------------------
+        // Capture marker
+        // --------------------------------------------------
+        if (is_capture)
+            san += "x";
+
+        // --------------------------------------------------
+        // Destination square
+        // --------------------------------------------------
+        san += square_to_string(to);
+
+        // --------------------------------------------------
+        // Promotion
+        // --------------------------------------------------
+        if (move.flag() == MoveFlag::PROMOTION) {
+            san += "=";
+            switch (move.promotion()) {
+                case PieceType::QUEEN:  san += "Q"; break;
+                case PieceType::ROOK:   san += "R"; break;
+                case PieceType::BISHOP: san += "B"; break;
+                case PieceType::KNIGHT: san += "N"; break;
+                default: break;
+            }
+        }
+
+        // --------------------------------------------------
+        // Check / Mate suffix
+        // --------------------------------------------------
+        apply_move(move);
+
+        if (is_checkmate())
+            san += "#";
+        else if (is_in_check(position.side_to_move))
+            san += "+";
+
+        restore_from_history();
+
+        return san;
+    }
+
     // ============================================================================
     // Board Interface
     // ============================================================================
@@ -871,14 +1069,7 @@ namespace chess
     }
 
     void Board::generate_moves(MoveList& moves) const {
-        MoveList pseudo_legal;
-        impl->generate_pseudo_legal_moves(pseudo_legal);
-
-        moves.clear();
-
-        // Filter each move for legality
-        for (const auto& move : pseudo_legal)
-            if (is_legal_move(move)) moves.add(move);
+        impl->generate_all_moves(moves);
     }
 
     void Board::generate_captures(MoveList& moves) const {
@@ -890,21 +1081,21 @@ namespace chess
             if (move.is_capture()) moves.add(move);
     }
 
-    bool Board::is_legal_move(const Move move) const {
-        const Color my_color = side_to_move();
-        impl->apply_move(move);
-        const bool king_safe = !impl->is_king_under_attack(my_color);
-        impl->restore_from_history();
-        return king_safe;
+    void Board::generate_checks(MoveList& moves) const {
+        impl->generate_checks(moves);
     }
 
-    void Board::make_move(const Move move) const {
+    bool Board::is_legal_move(const Move move) const {
+        return impl->is_legal_move(move);
+    }
+
+    void Board::make_move(const Move move) {
         if (!is_legal_move(move))
             throw std::invalid_argument("Illegal move");
         impl->apply_move(move);
     }
 
-    void Board::undo_move() const {
+    void Board::undo_move() {
         if (impl->undo_history.empty())
             throw std::runtime_error("No moves to undo");
         impl->restore_from_history();
@@ -919,23 +1110,20 @@ namespace chess
     }
 
     bool Board::is_in_check() const {
-        return impl->is_king_under_attack(side_to_move());
+        const Color color = side_to_move();
+        return impl->is_in_check(color);
     }
 
     bool Board::is_checkmate() const {
-        if (!is_in_check()) return false;
+        return impl->is_checkmate();
+    }
 
-        MoveList moves;
-        generate_moves(moves);
-        return moves.empty();
+    bool Board::is_draw() const {
+        return is_stalemate() || is_50_move_draw() || is_threefold_repetition();
     }
 
     bool Board::is_stalemate() const {
-        if (is_in_check()) return false;
-
-        MoveList moves;
-        generate_moves(moves);
-        return moves.empty();
+        return impl->is_stalemate();
     }
 
     bool Board::is_50_move_draw() const {
@@ -980,4 +1168,14 @@ namespace chess
         return true;
     }
 
+    std::string Board::move_to_san(const Move& move) {
+        return impl->move_to_san(move);
+    }
+
 }  // namespace chess
+
+std::ostream& operator<<(std::ostream& os, const chess::Board& board)
+{
+    os << board.to_string();
+    return os;
+}
